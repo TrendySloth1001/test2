@@ -24,4 +24,14 @@ CREATE TABLE IF NOT EXISTS session_participants (
     PRIMARY KEY (session_id, user_id),
     FOREIGN KEY (session_id) REFERENCES sessions(id),
     FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS files (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    session_id VARCHAR(64) NOT NULL,
+    filename VARCHAR(255) NOT NULL,
+    content TEXT,
+    last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE(session_id, filename),
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
 ); 

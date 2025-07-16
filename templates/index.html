@@ -2,21 +2,59 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Collaborative Code Editor</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css">
+    <title>devHub Collaborative Editor</title>
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css">
 </head>
-<body>
-    <h1>Collaborative Code Editor</h1>
-    {% if username %}
-    <p style="text-align:center;">Logged in as <b>{{ username }}</b> | <a href="/logout">Logout</a></p>
-    {% endif %}
-    <textarea id="editor"></textarea>
+<body class="vscode-bg">
+    <div class="vscode-layout" id="vscode-layout">
+        <!-- Sidebar: File Explorer -->
+        <aside class="vscode-sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <i class="fas fa-folder-open"></i> Files
+                <button id="new-file-btn" title="New File"><i class="fas fa-plus"></i></button>
+            </div>
+            <ul class="file-list" id="file-list">
+                <li class="file-item loading">Loading...</li>
+            </ul>
+            <div class="sidebar-resizer" id="sidebar-resizer"></div>
+        </aside>
+        <!-- Main Editor Area -->
+        <main class="vscode-main" id="main-panel">
+            <header class="vscode-header">
+                <div class="vscode-logo"><i class="fas fa-code"></i> devHub</div>
+                <div class="vscode-session"><i class="fas fa-users"></i> Session: <span class="session-id">{{ session_id if session_id else 'N/A' }}</span></div>
+                <div class="vscode-user"><i class="fas fa-user"></i> {{ username }} <a href="/dashboard" class="vscode-back" title="Back to Dashboard"><i class="fas fa-arrow-left"></i></a> <a href="/logout" class="vscode-logout" title="Logout"><i class="fas fa-sign-out-alt"></i></a></div>
+            </header>
+            <div class="editor-card vscode-editor-card">
+                <div class="editor-tabs" id="editor-tabs">
+                    <!-- Tabs will be dynamically generated -->
+                </div>
+                <textarea id="editor"></textarea>
+                <button id="save-btn" class="save-btn" title="Save File"><i class="fas fa-save"></i> Save</button>
+            </div>
+            <div class="main-resizer" id="main-resizer"></div>
+        </main>
+        <!-- Chat Panel -->
+        <aside class="vscode-chat" id="chat-panel">
+            <div class="chat-header"><i class="fas fa-comments"></i> Chat</div>
+            <div id="chat-messages" class="chat-messages"></div>
+            <form id="chat-form" class="chat-form" autocomplete="off">
+                <input type="text" id="chat-input" placeholder="Type a message..." required />
+                <button type="submit"><i class="fas fa-paper-plane"></i></button>
+            </form>
+        </aside>
+    </div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/python/python.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
     <script>
-        var editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
+        const sessionId = "{{ session_id }}";
+        const username = "{{ username }}";
+        let currentFile = null;
+        let fileList = [];
+        let editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
             lineNumbers: true,
             mode: 'python',
             theme: 'default',
@@ -24,23 +62,151 @@
         var socket = io();
         var ignoreChange = false;
 
-        // Request current code when connecting
-        socket.on('connect', function() {
-            socket.emit('request_code');
+        // --- File System Logic ---
+        async function fetchFileList() {
+            const res = await fetch(`/api/session/${sessionId}/files`);
+            const data = await res.json();
+            fileList = data.files || [];
+            renderFileList();
+        }
+        function renderFileList() {
+            const ul = document.getElementById('file-list');
+            ul.innerHTML = '';
+            if (fileList.length === 0) {
+                ul.innerHTML = '<li class="file-item">No files</li>';
+            } else {
+                fileList.forEach(filename => {
+                    const li = document.createElement('li');
+                    li.className = 'file-item' + (filename === currentFile ? ' active' : '');
+                    li.innerHTML = `<i class='fas fa-file-code'></i> ${filename}`;
+                    li.onclick = () => openFile(filename);
+                    ul.appendChild(li);
+                });
+            }
+        }
+        async function openFile(filename) {
+            if (currentFile === filename) return;
+            currentFile = filename;
+            renderFileList();
+            renderTabs();
+            const res = await fetch(`/api/session/${sessionId}/file/${encodeURIComponent(filename)}`);
+            const data = await res.json();
+            editor.setValue(data.content || '');
+        }
+        function renderTabs() {
+            const tabs = document.getElementById('editor-tabs');
+            tabs.innerHTML = '';
+            if (currentFile) {
+                const tab = document.createElement('div');
+                tab.className = 'editor-tab active';
+                tab.innerHTML = `<i class='fas fa-file-code'></i> ${currentFile}`;
+                tabs.appendChild(tab);
+            }
+        }
+        async function saveCurrentFile() {
+            if (!currentFile) return;
+            const content = editor.getValue();
+            await fetch(`/api/session/${sessionId}/file/${encodeURIComponent(currentFile)}`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({content})
+            });
+        }
+        document.getElementById('save-btn').onclick = saveCurrentFile;
+        // Auto-save on change (debounced)
+        let saveTimeout = null;
+        editor.on('change', function() {
+            if (!currentFile) return;
+            if (saveTimeout) clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(saveCurrentFile, 1000);
+        });
+        // New File
+        document.getElementById('new-file-btn').onclick = async function() {
+            const filename = prompt('Enter new file name (e.g. script.py):');
+            if (!filename) return;
+            await fetch(`/api/session/${sessionId}/files`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({filename})
+            });
+            await fetchFileList();
+            openFile(filename);
+        };
+        // Initial load
+        fetchFileList().then(() => {
+            if (fileList.length > 0) openFile(fileList[0]);
         });
 
-        // Update editor when code is received
+        // --- Collaborative code sync (per file) ---
+        socket.on('connect', function() {
+            if (currentFile) socket.emit('request_code', {file: currentFile});
+        });
         socket.on('code_update', function(data) {
+            if (data.file !== currentFile) return;
             ignoreChange = true;
             editor.setValue(data.code);
             ignoreChange = false;
         });
-
-        // Send code changes
         editor.on('change', function() {
-            if (!ignoreChange) {
-                socket.emit('code_change', {code: editor.getValue()});
+            if (!ignoreChange && currentFile) {
+                socket.emit('code_change', {file: currentFile, code: editor.getValue()});
             }
+        });
+
+        // --- Chat functionality ---
+        const chatForm = document.getElementById('chat-form');
+        const chatInput = document.getElementById('chat-input');
+        const chatMessages = document.getElementById('chat-messages');
+        socket.on('chat_message', function(data) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'chat-message';
+            msgDiv.innerHTML = `<b>${data.user}</b> <span class='chat-timestamp'>${data.time || ''}</span>: ${data.message}`;
+            chatMessages.appendChild(msgDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        });
+        chatForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            if (chatInput.value.trim() !== '') {
+                socket.emit('chat_message', {user: username, message: chatInput.value});
+                chatInput.value = '';
+            }
+        });
+
+        // --- Resizable Panels ---
+        const sidebar = document.getElementById('sidebar');
+        const sidebarResizer = document.getElementById('sidebar-resizer');
+        const mainPanel = document.getElementById('main-panel');
+        const mainResizer = document.getElementById('main-resizer');
+        const chatPanel = document.getElementById('chat-panel');
+        let isResizingSidebar = false, isResizingMain = false;
+        sidebarResizer.addEventListener('mousedown', function(e) {
+            isResizingSidebar = true;
+            document.body.style.cursor = 'col-resize';
+        });
+        mainResizer.addEventListener('mousedown', function(e) {
+            isResizingMain = true;
+            document.body.style.cursor = 'col-resize';
+        });
+        document.addEventListener('mousemove', function(e) {
+            if (isResizingSidebar) {
+                let newWidth = e.clientX;
+                if (newWidth < 120) newWidth = 120;
+                if (newWidth > 400) newWidth = 400;
+                sidebar.style.width = newWidth + 'px';
+            }
+            if (isResizingMain) {
+                let totalWidth = document.getElementById('vscode-layout').offsetWidth;
+                let sidebarWidth = sidebar.offsetWidth;
+                let newChatWidth = totalWidth - e.clientX;
+                if (newChatWidth < 180) newChatWidth = 180;
+                if (newChatWidth > 500) newChatWidth = 500;
+                chatPanel.style.width = newChatWidth + 'px';
+            }
+        });
+        document.addEventListener('mouseup', function(e) {
+            isResizingSidebar = false;
+            isResizingMain = false;
+            document.body.style.cursor = '';
         });
     </script>
 </body>

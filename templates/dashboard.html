@@ -4,18 +4,44 @@
     <meta charset="UTF-8">
     <title>User Dashboard</title>
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
 </head>
 <body>
-    <h1>Welcome, {{ username }}!</h1>
-    <p><a href="/logout">Logout</a></p>
-    <h2>Create a New Session</h2>
-    <form method="post" action="/create_session">
-        <button type="submit">Create Session</button>
-    </form>
-    <h2>Join a Session</h2>
-    <form method="post" action="/join_session">
-        <input type="text" name="session_id" placeholder="Enter Session ID" required>
-        <button type="submit">Join Session</button>
-    </form>
+    <div class="dashboard-container">
+        <header>
+            <div class="dashboard-logo"><i class="fas fa-code"></i> <span>devHub</span></div>
+            <div class="dashboard-user">Welcome, <b>{{ username }}</b> <a href="/logout" title="Logout"><i class="fas fa-sign-out-alt"></i></a></div>
+        </header>
+        <section class="card dashboard-section">
+            <h2><i class="fas fa-plus-circle"></i> Create a New Session</h2>
+            <form method="post" action="/create_session">
+                <button type="submit"><i class="fas fa-plus"></i> Create Session</button>
+            </form>
+        </section>
+        <section class="card dashboard-section">
+            <h2><i class="fas fa-sign-in-alt"></i> Join a Session</h2>
+            <form method="post" action="/join_session">
+                <input type="text" name="session_id" placeholder="Enter Session ID" required>
+                <button type="submit"><i class="fas fa-arrow-right"></i> Join Session</button>
+            </form>
+        </section>
+        <section class="card dashboard-section">
+            <h2><i class="fas fa-list"></i> Your Sessions</h2>
+            {% if sessions and sessions|length > 0 %}
+            <table>
+                <tr><th>Session ID</th><th>Created At</th><th>Action</th></tr>
+                {% for session in sessions %}
+                <tr>
+                    <td>{{ session[0] }}</td>
+                    <td>{{ session[1] }}</td>
+                    <td><a class="session-link" href="/session/{{ session[0] }}"><i class="fas fa-arrow-circle-right"></i> Go to Session</a></td>
+                </tr>
+                {% endfor %}
+            </table>
+            {% else %}
+            <p style="text-align:center;">No sessions created yet.</p>
+            {% endif %}
+        </section>
+    </div>
 </body>
 </html> 

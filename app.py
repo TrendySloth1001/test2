@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from flask_socketio import SocketIO, emit
 from werkzeug.security import generate_password_hash, check_password_hash
 import eventlet
@@ -55,7 +55,17 @@ def signup():
 def dashboard():
     if 'username' not in session:
         return redirect(url_for('login'))
-    return render_template('dashboard.html', username=session['username'])
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT id FROM users WHERE username=%s', (session['username'],))
+    user = cur.fetchone()
+    sessions_list = []
+    if user:
+        user_id = user[0]
+        cur.execute('SELECT session_id, created_at FROM sessions WHERE owner_id=%s ORDER BY created_at DESC', (user_id,))
+        sessions_list = cur.fetchall()
+    conn.close()
+    return render_template('dashboard.html', username=session['username'], sessions=sessions_list)
 
 @app.route('/create_session', methods=['POST'])
 def create_session():
@@ -139,6 +149,67 @@ def index():
     if 'username' not in session:
         return redirect(url_for('login'))
     return render_template('index.html', username=session['username'])
+
+# API: List files in a session
+@app.route('/api/session/<session_id>/files', methods=['GET'])
+def api_list_files(session_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT filename FROM files WHERE session_id=%s ORDER BY filename', (session_id,))
+    files = [row[0] for row in cur.fetchall()]
+    conn.close()
+    return jsonify({'files': files})
+
+# API: Create a new file in a session
+@app.route('/api/session/<session_id>/files', methods=['POST'])
+def api_create_file(session_id):
+    filename = request.json.get('filename')
+    if not filename:
+        return jsonify({'error': 'Filename required'}), 400
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute('INSERT INTO files (session_id, filename, content) VALUES (%s, %s, %s)', (session_id, filename, ''))
+        conn.commit()
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': str(e)}), 400
+    conn.close()
+    return jsonify({'success': True})
+
+# API: Get file content
+@app.route('/api/session/<session_id>/file/<filename>', methods=['GET'])
+def api_get_file(session_id, filename):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT content FROM files WHERE session_id=%s AND filename=%s', (session_id, filename))
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return jsonify({'content': row[0]})
+    else:
+        return jsonify({'error': 'File not found'}), 404
+
+# API: Save/update file content
+@app.route('/api/session/<session_id>/file/<filename>', methods=['POST'])
+def api_save_file(session_id, filename):
+    content = request.json.get('content', '')
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute('UPDATE files SET content=%s WHERE session_id=%s AND filename=%s', (content, session_id, filename))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
+
+# API: Delete a file
+@app.route('/api/session/<session_id>/file/<filename>', methods=['DELETE'])
+def api_delete_file(session_id, filename):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute('DELETE FROM files WHERE session_id=%s AND filename=%s', (session_id, filename))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
 
 if __name__ == '__main__':
     socketio.run(app, debug=True) 
