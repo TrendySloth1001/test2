@@ -5,8 +5,8 @@
     <title>devHub Collaborative Editor</title>
     <link rel="stylesheet" href="/static/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/theme/material-darker.min.css">
+    <!-- Monaco Editor CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs/loader.js"></script>
 </head>
 <body class="vscode-bg">
     <div id="cookie-warning" class="cookie-warning" style="display:none;">Cookies are disabled or blocked. Please enable cookies for full functionality.</div>
@@ -33,7 +33,7 @@
                 <div class="editor-tabs" id="editor-tabs">
                     <!-- Tabs will be dynamically generated -->
                 </div>
-                <textarea id="editor"></textarea>
+                <div id="monaco-editor" style="width:100%;height:calc(70vh - 38px);"></div>
                 <button id="save-btn" class="save-btn" title="Save File"><i class="fas fa-save"></i> Save</button>
             </div>
             <div class="main-resizer" id="main-resizer"></div>
@@ -54,9 +54,6 @@
             </form>
         </aside>
     </div>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/python/python.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/theme/material-darker.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
     <script>
         // Cookie warning
@@ -74,20 +71,25 @@
         const username = "{{ username }}";
         let currentFile = null;
         let fileList = [];
-        let editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
-            lineNumbers: true,
-            mode: 'python',
-            theme: 'material-darker',
-            autofocus: true,
-            indentUnit: 4,
-            tabSize: 4,
-            indentWithTabs: true,
-            lineWrapping: true,
-        });
-        var socket = io();
-        var ignoreChange = false;
+        let monacoEditor = null;
+        let monacoInstance = null;
         let joinedFile = null;
         let joinedSession = false;
+        let ignoreChange = false;
+        let saveTimeout = null;
+
+        // Monaco language map
+        const extToLang = {
+            'py': 'python', 'js': 'javascript', 'ts': 'typescript', 'json': 'json', 'html': 'html', 'css': 'css',
+            'java': 'java', 'c': 'c', 'cpp': 'cpp', 'cs': 'csharp', 'go': 'go', 'php': 'php', 'rb': 'ruby',
+            'sh': 'shell', 'md': 'markdown', 'xml': 'xml', 'yml': 'yaml', 'yaml': 'yaml', 'swift': 'swift',
+            'rs': 'rust', 'kt': 'kotlin', 'sql': 'sql', 'dart': 'dart', 'scala': 'scala', 'pl': 'perl',
+            'r': 'r', 'lua': 'lua', 'bat': 'bat', 'dockerfile': 'dockerfile', 'makefile': 'makefile',
+        };
+        function getLang(filename) {
+            const ext = filename.split('.').pop().toLowerCase();
+            return extToLang[ext] || 'plaintext';
+        }
 
         // --- File System Logic ---
         async function fetchFileList() {
@@ -127,7 +129,6 @@
         }
         async function openFile(filename) {
             if (currentFile === filename) return;
-            // Leave previous file room
             if (joinedFile) {
                 socket.emit('leave_file', {session_id: sessionId, file: joinedFile});
             }
@@ -136,11 +137,9 @@
             renderTabs();
             const res = await fetch(`/api/session/${sessionId}/file/${encodeURIComponent(filename)}`);
             const data = await res.json();
-            editor.setValue(data.content || '');
-            // Join new file room
+            setMonacoContent(data.content || '', getLang(filename));
             socket.emit('join_file', {session_id: sessionId, file: filename});
             joinedFile = filename;
-            // Update status bar
             document.getElementById('status-filename').innerHTML = `<i class='fas fa-file-code'></i> ${filename}`;
         }
         function renderTabs() {
@@ -155,7 +154,7 @@
         }
         async function saveCurrentFile() {
             if (!currentFile) return;
-            const content = editor.getValue();
+            const content = monacoEditor.getValue();
             await fetch(`/api/session/${sessionId}/file/${encodeURIComponent(currentFile)}`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -164,12 +163,13 @@
         }
         document.getElementById('save-btn').onclick = saveCurrentFile;
         // Auto-save on change (debounced)
-        let saveTimeout = null;
-        editor.on('change', function() {
+        function onMonacoChange() {
             if (!currentFile) return;
+            if (ignoreChange) return;
             if (saveTimeout) clearTimeout(saveTimeout);
             saveTimeout = setTimeout(saveCurrentFile, 1000);
-        });
+            socket.emit('code_change', {session_id: sessionId, file: currentFile, code: monacoEditor.getValue()});
+        }
         // New File
         document.getElementById('new-file-btn').onclick = async function() {
             const filename = prompt('Enter new file name (e.g. script.py):');
@@ -189,7 +189,7 @@
             await fetchFileList();
             if (currentFile === filename) {
                 currentFile = null;
-                editor.setValue('');
+                setMonacoContent('', 'plaintext');
                 renderTabs();
                 document.getElementById('status-filename').innerHTML = `<i class='fas fa-file-code'></i> No file`;
             }
@@ -215,9 +215,32 @@
             if (fileList.length > 0) openFile(fileList[0]);
         });
 
+        // --- Monaco Editor Loader ---
+        window.require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs' } });
+        window.require(['vs/editor/editor.main'], function () {
+            monacoEditor = monaco.editor.create(document.getElementById('monaco-editor'), {
+                value: '',
+                language: 'plaintext',
+                theme: 'vs-dark',
+                automaticLayout: true,
+                fontSize: 16,
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                wordWrap: 'on',
+            });
+            monacoEditor.onDidChangeModelContent(onMonacoChange);
+        });
+        function setMonacoContent(content, lang) {
+            if (!monacoEditor) return;
+            const oldModel = monacoEditor.getModel();
+            const newModel = monaco.editor.createModel(content, lang);
+            monacoEditor.setModel(newModel);
+            if (oldModel) oldModel.dispose();
+        }
+
         // --- Collaborative code sync (per file) ---
+        var socket = io();
         socket.on('connect', function() {
-            // Join session room for chat/user list
             if (!joinedSession) {
                 socket.emit('join_session', {session_id: sessionId});
                 joinedSession = true;
@@ -227,20 +250,14 @@
         socket.on('code_update', function(data) {
             if (data.file !== currentFile) return;
             ignoreChange = true;
-            editor.setValue(data.code);
+            setMonacoContent(data.code, getLang(currentFile));
             ignoreChange = false;
-        });
-        editor.on('change', function() {
-            if (!ignoreChange && currentFile) {
-                socket.emit('code_change', {session_id: sessionId, file: currentFile, code: editor.getValue()});
-            }
         });
 
         // --- Chat functionality ---
         const chatForm = document.getElementById('chat-form');
         const chatInput = document.getElementById('chat-input');
         const chatMessages = document.getElementById('chat-messages');
-        // Load chat history
         async function loadChatHistory() {
             const res = await fetch(`/api/session/${sessionId}/chats`);
             const data = await res.json();
@@ -274,7 +291,6 @@
             userListDiv.innerHTML = `<i class='fas fa-users'></i> <b>Users:</b> ` + users.map(u => `<span class='user-pill'>${u}</span>`).join(' ');
             document.getElementById('status-users').innerHTML = `<i class='fas fa-users'></i> ${users.length} user${users.length === 1 ? '' : 's'}`;
         });
-
         // --- Status Bar Clock ---
         function updateClock() {
             const now = new Date();
@@ -282,7 +298,6 @@
         }
         setInterval(updateClock, 1000);
         updateClock();
-
         // --- Resizable Panels ---
         const sidebar = document.getElementById('sidebar');
         const sidebarResizer = document.getElementById('sidebar-resizer');
