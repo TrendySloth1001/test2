@@ -1,10 +1,11 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
-from flask_socketio import SocketIO, emit
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, abort
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.security import generate_password_hash, check_password_hash
 import eventlet
 from flask_mysqldb import MySQL
 from db_config import get_db_connection
 import uuid
+import datetime
 
 # Check DB connection at startup
 try:
@@ -29,6 +30,9 @@ mysql = MySQL(app)
 # In-memory user store (for demo)
 users = {}
 
+# In-memory user tracking for sessions (for demo)
+session_users = {}
+
 @app.route('/signup', methods=['GET', 'POST'])
 def signup():
     if request.method == 'POST':
@@ -51,6 +55,11 @@ def signup():
         return redirect(url_for('login'))
     return render_template('signup.html')
 
+@app.errorhandler(403)
+def forbidden(e):
+    return render_template('403.html'), 403
+
+# Ensure all protected routes redirect to login if not authenticated
 @app.route('/dashboard')
 def dashboard():
     if 'username' not in session:
@@ -135,14 +144,99 @@ def logout():
 # Store code in memory (for demo; use a database for production)
 shared_code = {'content': ''}
 
+@socketio.on('join_file')
+def handle_join_file(data=None):
+    session_id = data.get('session_id') if data and 'session_id' in data else None
+    file = data.get('file') if data and 'file' in data else None
+    username = session.get('username')
+    room = f"{session_id}:{file}"
+    join_room(room)
+    if session_id not in session_users:
+        session_users[session_id] = set()
+    session_users[session_id].add(username)
+    emit('user_list', list(session_users[session_id]), to=session_id)
+
+@socketio.on('leave_file')
+def handle_leave_file(data=None):
+    session_id = data.get('session_id') if data and 'session_id' in data else None
+    file = data.get('file') if data and 'file' in data else None
+    username = session.get('username')
+    room = f"{session_id}:{file}"
+    leave_room(room)
+    if session_id in session_users and username in session_users[session_id]:
+        session_users[session_id].remove(username)
+        emit('user_list', list(session_users[session_id]), to=session_id)
+
 @socketio.on('code_change')
-def handle_code_change(data):
-    shared_code['content'] = data['code']
-    emit('code_update', {'code': data['code']}, broadcast=True, include_self=False)
+def handle_code_change(data=None):
+    session_id = data.get('session_id') if data and 'session_id' in data else None
+    file = data.get('file') if data and 'file' in data else None
+    code = data.get('code') if data and 'code' in data else None
+    room = f"{session_id}:{file}"
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute('UPDATE files SET content=%s WHERE session_id=%s AND filename=%s', (code, session_id, file))
+    conn.commit()
+    conn.close()
+    emit('code_update', {'file': file, 'code': code}, to=room, include_self=False)
 
 @socketio.on('request_code')
-def handle_request_code():
-    emit('code_update', {'code': shared_code['content']})
+def handle_request_code(data=None):
+    session_id = data.get('session_id') if data and 'session_id' in data else None
+    file = data.get('file') if data and 'file' in data else None
+    room = f"{session_id}:{file}"
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT content FROM files WHERE session_id=%s AND filename=%s', (session_id, file))
+    row = cur.fetchone()
+    conn.close()
+    code = row[0] if row else ''
+    emit('code_update', {'file': file, 'code': code}, to=room)
+
+# API: Get last 50 chat messages for a session
+@app.route('/api/session/<session_id>/chats', methods=['GET'])
+def api_get_chats(session_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT user, message, timestamp FROM chats WHERE session_id=%s ORDER BY timestamp DESC LIMIT 50', (session_id,))
+    messages = [
+        {'user': row[0], 'message': row[1], 'time': row[2].strftime('%H:%M')}
+        for row in reversed(cur.fetchall())
+    ]
+    conn.close()
+    return jsonify({'messages': messages})
+
+@socketio.on('chat_message')
+def handle_chat_message(data=None):
+    session_id = data.get('session_id') if data and 'session_id' in data else None
+    user = data.get('user') if data and 'user' in data else None
+    message = data.get('message') if data and 'message' in data else None
+    time = datetime.datetime.now().strftime('%H:%M')
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute('INSERT INTO chats (session_id, user, message) VALUES (%s, %s, %s)', (session_id, user, message))
+    conn.commit()
+    conn.close()
+    emit('chat_message', {'user': user, 'message': message, 'time': time}, to=session_id)
+
+@socketio.on('join_session')
+def handle_join_session(data=None):
+    session_id = data.get('session_id') if data and 'session_id' in data else None
+    username = session.get('username')
+    join_room(session_id)
+    if session_id not in session_users:
+        session_users[session_id] = set()
+    session_users[session_id].add(username)
+    emit('user_list', list(session_users[session_id]), to=session_id)
+
+@socketio.on('leave_session')
+def handle_leave_session(data=None):
+    session_id = data.get('session_id') if data and 'session_id' in data else None
+    username = session.get('username')
+    leave_room(session_id)
+    if session_id in session_users and username in session_users[session_id]:
+        session_users[session_id].remove(username)
+        emit('user_list', list(session_users[session_id]), to=session_id)
 
 @app.route('/')
 def index():
@@ -211,5 +305,18 @@ def api_delete_file(session_id, filename):
     conn.close()
     return jsonify({'success': True})
 
+# API: Rename a file
+@app.route('/api/session/<session_id>/file/<filename>/rename', methods=['POST'])
+def api_rename_file(session_id, filename):
+    new_filename = request.json.get('new_filename')
+    if not new_filename:
+        return jsonify({'error': 'New filename required'}), 400
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute('UPDATE files SET filename=%s WHERE session_id=%s AND filename=%s', (new_filename, session_id, filename))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
+
 if __name__ == '__main__':
-    socketio.run(app, debug=True) 
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000) 

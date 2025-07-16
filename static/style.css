@@ -776,9 +776,144 @@ header {
     box-shadow: 0 1px 4px 0 rgba(76, 110, 245, 0.10);
 }
 
+/* User List in Chat */
+.user-list {
+    padding: 8px 18px 0 18px;
+    color: #48c6ef;
+    font-size: 1rem;
+    margin-bottom: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+.user-pill {
+    background: #23263a;
+    color: #f1f1f1;
+    border-radius: 12px;
+    padding: 2px 10px;
+    font-size: 0.98rem;
+    margin-left: 2px;
+    margin-right: 2px;
+    display: inline-block;
+}
+
+/* File Actions (Delete/Rename) */
+.file-actions {
+    float: right;
+    display: inline-flex;
+    gap: 4px;
+    margin-left: 10px;
+}
+.rename-btn, .delete-btn {
+    background: none;
+    border: none;
+    color: #a3a8b8;
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: background 0.2s, color 0.2s;
+}
+.rename-btn:hover {
+    color: #48c6ef;
+    background: #23263a;
+}
+.delete-btn:hover {
+    color: #ff5c5c;
+    background: #23263a;
+}
+
 /* Ensure all backgrounds are dark */
-body, .vscode-bg, .vscode-layout, .vscode-sidebar, .vscode-main, .vscode-chat, .editor-card, .vscode-editor-card, .editor-tabs, .editor-tab, .file-item, .file-list, .sidebar-header, .chat-header, .chat-messages, .chat-message, .chat-form, #chat-input, .save-btn, #new-file-btn {
+body, .vscode-bg, .vscode-layout, .vscode-sidebar, .vscode-main, .vscode-chat, .editor-card, .vscode-editor-card, .editor-tabs, .editor-tab, .file-item, .file-list, .sidebar-header, .chat-header, .chat-messages, .chat-message, .chat-form, #chat-input, .save-btn, #new-file-btn, .user-list, .user-pill, .file-actions, .rename-btn, .delete-btn {
     background: #181a20 !important;
     color: #f1f1f1 !important;
     border-color: #23263a !important;
+} 
+
+/* Status Bar */
+.status-bar {
+    width: 100%;
+    background: #20222b;
+    color: #a3a8b8;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 24px;
+    border-top: 1.5px solid #23263a;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10;
+    height: 38px;
+    box-sizing: border-box;
+}
+.status-bar span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* Cookie Warning */
+.cookie-warning {
+    background: #ff5c5c;
+    color: #fff;
+    text-align: center;
+    padding: 10px 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    box-shadow: 0 2px 8px 0 rgba(0,0,0,0.18);
+}
+
+/* Responsive Layout Tweaks */
+@media (max-width: 900px) {
+    .vscode-layout {
+        flex-direction: column;
+    }
+    .vscode-sidebar, .vscode-chat {
+        width: 100vw;
+        min-width: 0;
+        max-width: 100vw;
+        border: none;
+        box-shadow: none;
+    }
+    .vscode-main {
+        min-width: 0;
+    }
+    .vscode-editor-card {
+        margin: 0 2vw 0 2vw;
+    }
+    .status-bar {
+        padding: 8px 8vw;
+        font-size: 0.95rem;
+    }
+}
+
+.vscode-main {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    position: relative;
+}
+.vscode-editor-card {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    margin-bottom: 38px; /* for status bar */
+}
+.vscode-editor-card .CodeMirror {
+    flex: 1 1 0;
+    min-height: 0;
+    height: calc(70vh - 38px);
+    max-height: calc(100vh - 180px);
 } 
