@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Collaborative Code Editor</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <h1>Collaborative Code Editor</h1>
+    {% if username %}
+    <p style="text-align:center;">Logged in as <b>{{ username }}</b> | <a href="/logout">Logout</a></p>
+    {% endif %}
+    <textarea id="editor"></textarea>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/python/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+    <script>
+        var editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
+            lineNumbers: true,
+            mode: 'python',
+            theme: 'default',
+        });
+        var socket = io();
+        var ignoreChange = false;
+
+        // Request current code when connecting
+        socket.on('connect', function() {
+            socket.emit('request_code');
+        });
+
+        // Update editor when code is received
+        socket.on('code_update', function(data) {
+            ignoreChange = true;
+            editor.setValue(data.code);
+            ignoreChange = false;
+        });
+
+        // Send code changes
+        editor.on('change', function() {
+            if (!ignoreChange) {
+                socket.emit('code_change', {code: editor.getValue()});
+            }
+        });
+    </script>
+</body>
+</html> 

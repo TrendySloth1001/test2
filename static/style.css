@@ -1,0 +1,19 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background: #f4f4f4;
+}
+h1 {
+    text-align: center;
+    margin-top: 20px;
+}
+.CodeMirror {
+    width: 80vw;
+    height: 70vh;
+    margin: 20px auto;
+    display: block;
+    font-size: 16px;
+    border: 1px solid #ccc;
+    background: #fff;
+} 

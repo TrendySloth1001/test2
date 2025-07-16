@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>User Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <h1>Welcome, {{ username }}!</h1>
+    <p><a href="/logout">Logout</a></p>
+    <h2>Create a New Session</h2>
+    <form method="post" action="/create_session">
+        <button type="submit">Create Session</button>
+    </form>
+    <h2>Join a Session</h2>
+    <form method="post" action="/join_session">
+        <input type="text" name="session_id" placeholder="Enter Session ID" required>
+        <button type="submit">Join Session</button>
+    </form>
+</body>
+</html> 
